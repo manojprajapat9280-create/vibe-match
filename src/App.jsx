@@ -172,6 +172,7 @@ function App() {
 
   const typingTimeoutRef = useRef(null);
   const presenceChannelRef = useRef(null);
+  const messageChannelRef = useRef(null);
 
   const unreadNotifications = notifications.filter(
     (notification) => !notification.is_read
@@ -720,6 +721,7 @@ function App() {
     await loadMessages(match.id);
     await loadRevealStatus(match);
     setupPresence(match);
+    setupMessageRealtime(match);
   };
 
   const closeChat = () => {
@@ -742,6 +744,71 @@ function App() {
       presenceChannelRef.current =
         null;
     }
+
+    if (
+      messageChannelRef.current
+    ) {
+      supabase.removeChannel(
+        messageChannelRef.current
+      );
+
+      messageChannelRef.current =
+        null;
+    }
+  };
+
+  const setupMessageRealtime = (match) => {
+    if (!match?.id) return;
+
+    if (messageChannelRef.current) {
+      supabase.removeChannel(
+        messageChannelRef.current
+      );
+      messageChannelRef.current = null;
+    }
+
+    const channel = supabase
+      .channel(`vibematch-messages-${match.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `match_id=eq.${match.id}`,
+        },
+        async (payload) => {
+          const newMessage = payload.new;
+
+          setMessages((previous) => {
+            const alreadyExists = previous.some(
+              (message) =>
+                message.id === newMessage.id
+            );
+
+            if (alreadyExists) {
+              return previous;
+            }
+
+            return [...previous, newMessage];
+          });
+
+          if (
+            newMessage.sender_id !==
+            session?.user?.id
+          ) {
+            await supabase.rpc(
+              "mark_messages_seen",
+              {
+                p_match_id: match.id,
+              }
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    messageChannelRef.current = channel;
   };
 
   const loadMessages = async (
@@ -1338,20 +1405,19 @@ function App() {
   useEffect(() => {
     if (!activeMatch) return;
 
-    const messageInterval =
+    // Messages are received through Supabase Realtime.
+    // Only reveal status is checked periodically, so the chat
+    // itself does not keep reloading every few seconds.
+    const revealInterval =
       setInterval(() => {
-        loadMessages(
-          activeMatch.id
-        );
-
         loadRevealStatus(
           activeMatch
         );
-      }, 2000);
+      }, 3000);
 
     return () =>
       clearInterval(
-        messageInterval
+        revealInterval
       );
   }, [activeMatch]);
 
@@ -1370,6 +1436,17 @@ function App() {
       );
 
       presenceChannelRef.current =
+        null;
+    }
+
+    if (
+      messageChannelRef.current
+    ) {
+      await supabase.removeChannel(
+        messageChannelRef.current
+      );
+
+      messageChannelRef.current =
         null;
     }
 

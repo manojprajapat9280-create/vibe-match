@@ -1700,6 +1700,19 @@ function App() {
             🎓 For IIT Ropar students •
             Your IIT email will be verified
           </p>
+
+          <div
+            style={{
+              marginTop: "22px",
+              textAlign: "center",
+              fontSize: "11px",
+              lineHeight: "1.5",
+              opacity: 0.65,
+            }}
+          >
+            <div>Built by Manoj Prajapat</div>
+            <div>Mathematics and Computing · IIT Ropar</div>
+          </div>
         </div>
       </div>
     );

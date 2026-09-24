@@ -89,11 +89,6 @@ const branches = [
   "Integrated Circuit Design & Technology (ICDT)",
 ];
 
-/*
- * Interesting anonymous names.
- * The number is generated from the user's UUID so
- * the same user gets the same anonymous name.
- */
 const anonymousNameParts = [
   "VibeBuddy",
   "ChillMate",
@@ -277,10 +272,6 @@ function App() {
 
         return;
       }
-
-      /*
-       * Save name / branch
-       */
 
       if (
         signupData?.fullName &&
@@ -495,9 +486,6 @@ function App() {
      * IMPORTANT:
      * Actual profiles table columns are:
      * id, display_name, email, branch, year, avatar
-     *
-     * We do NOT query anonymous_name or avatar_emoji
-     * because those columns do not exist in the DB.
      */
     const {
       data: profiles,
@@ -514,10 +502,6 @@ function App() {
       );
     }
 
-    /*
-     * Convert actual DB profile data into the
-     * anonymous structure used by the UI.
-     */
     const profileMap = {};
 
     (profiles || []).forEach(
@@ -534,6 +518,55 @@ function App() {
       }
     );
 
+    /*
+     * Get latest message for every match.
+     * Messages from BOTH users are included.
+     */
+    const matchIds = data.map(
+      (match) => match.id
+    );
+
+    const {
+      data: latestMessages,
+      error: latestMessageError,
+    } = await supabase
+      .from("messages")
+      .select("match_id, created_at")
+      .in("match_id", matchIds)
+      .order("created_at", {
+        ascending: false,
+      });
+
+    if (latestMessageError) {
+      console.error(
+        "Latest message load error:",
+        latestMessageError
+      );
+    }
+
+    /*
+     * Store only the newest message
+     * timestamp for each match.
+     */
+    const latestMessageMap = {};
+
+    (latestMessages || []).forEach(
+      (message) => {
+        if (
+          !latestMessageMap[
+            message.match_id
+          ]
+        ) {
+          latestMessageMap[
+            message.match_id
+          ] = message.created_at;
+        }
+      }
+    );
+
+    /*
+     * Format matches.
+     */
     const formattedMatches =
       data.map((match) => {
         const otherUserId =
@@ -544,6 +577,10 @@ function App() {
         return {
           ...match,
           otherUserId,
+          latestMessageAt:
+            latestMessageMap[
+              match.id
+            ] || null,
           profile:
             profileMap[otherUserId] || {
               anonymous_name:
@@ -554,6 +591,43 @@ function App() {
             },
         };
       });
+
+    /*
+     * SORTING:
+     *
+     * 1. Most recently messaged chat = top
+     * 2. Older messages = below
+     * 3. Chats with no messages = bottom
+     *
+     * It does NOT matter who sent the message.
+     */
+    formattedMatches.sort(
+      (a, b) => {
+        if (
+          !a.latestMessageAt &&
+          !b.latestMessageAt
+        ) {
+          return 0;
+        }
+
+        if (!a.latestMessageAt) {
+          return 1;
+        }
+
+        if (!b.latestMessageAt) {
+          return -1;
+        }
+
+        return (
+          new Date(
+            b.latestMessageAt
+          ).getTime() -
+          new Date(
+            a.latestMessageAt
+          ).getTime()
+        );
+      }
+    );
 
     setMatches(
       formattedMatches
@@ -792,7 +866,6 @@ function App() {
   const openChat = async (
     match
   ) => {
-    // Clear unread badge immediately
     setUnreadCounts(
       (previous) => ({
         ...previous,
@@ -844,6 +917,17 @@ function App() {
 
       messageChannelRef.current =
         null;
+    }
+
+    /*
+     * Refresh match order when returning
+     * to dashboard so the latest chat moves
+     * to the top immediately.
+     */
+    if (session?.user?.id) {
+      loadMatches(
+        session.user.id
+      );
     }
   };
 
@@ -1516,9 +1600,6 @@ function App() {
   useEffect(() => {
     if (!activeMatch) return;
 
-    // Messages are received through Supabase Realtime.
-    // Only reveal status is checked periodically, so the chat
-    // itself does not keep reloading every few seconds.
     const revealInterval =
       setInterval(() => {
         loadRevealStatus(
@@ -2067,7 +2148,6 @@ function App() {
             )}
           </div>
 
-          {/* Reveal area */}
           {isExpired &&
             !isRevealed && (
               <div
@@ -2223,7 +2303,6 @@ function App() {
               </div>
             )}
 
-          {/* Revealed profile */}
           {isRevealed &&
             revealedProfile && (
               <div

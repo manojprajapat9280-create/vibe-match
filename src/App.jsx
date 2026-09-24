@@ -147,6 +147,9 @@ function App() {
   const [matches, setMatches] = useState([]);
   const [activeMatch, setActiveMatch] = useState(null);
 
+  // Unread messages
+  const [unreadCounts, setUnreadCounts] = useState({});
+
   // Messages
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
@@ -218,6 +221,7 @@ function App() {
         } else {
           setQuestionnaireDone(false);
           setMatches([]);
+          setUnreadCounts({});
           setNotifications([]);
           setActiveMatch(null);
           setMessages([]);
@@ -256,9 +260,11 @@ function App() {
 
       const email = user.email || "";
 
-      if (!email
-        .toLowerCase()
-        .endsWith("@iitrpr.ac.in")) {
+      if (
+        !email
+          .toLowerCase()
+          .endsWith("@iitrpr.ac.in")
+      ) {
         await supabase.auth.signOut();
 
         localStorage.removeItem(
@@ -474,6 +480,7 @@ function App() {
 
     if (!data || data.length === 0) {
       setMatches([]);
+      setUnreadCounts({});
       return;
     }
 
@@ -484,14 +491,20 @@ function App() {
           : match.user1_id
     );
 
+    /*
+     * IMPORTANT:
+     * Actual profiles table columns are:
+     * id, display_name, email, branch, year, avatar
+     *
+     * We do NOT query anonymous_name or avatar_emoji
+     * because those columns do not exist in the DB.
+     */
     const {
       data: profiles,
       error: profileError,
     } = await supabase
       .from("profiles")
-      .select(
-        "id, anonymous_name, avatar_emoji"
-      )
+      .select("id, display_name, avatar")
       .in("id", otherUserIds);
 
     if (profileError) {
@@ -501,12 +514,23 @@ function App() {
       );
     }
 
+    /*
+     * Convert actual DB profile data into the
+     * anonymous structure used by the UI.
+     */
     const profileMap = {};
 
     (profiles || []).forEach(
       (profile) => {
-        profileMap[profile.id] =
-          profile;
+        profileMap[profile.id] = {
+          ...profile,
+          anonymous_name:
+            getAnonymousName(
+              profile.id
+            ),
+          avatar_emoji:
+            profile.avatar || "🤝",
+        };
       }
     );
 
@@ -523,7 +547,9 @@ function App() {
           profile:
             profileMap[otherUserId] || {
               anonymous_name:
-                "VibeBuddy",
+                getAnonymousName(
+                  otherUserId
+                ),
               avatar_emoji: "🤝",
             },
         };
@@ -532,6 +558,62 @@ function App() {
     setMatches(
       formattedMatches
     );
+
+    await loadUnreadCounts(
+      userId,
+      formattedMatches
+    );
+  };
+
+  /*
+   * ====================================================
+   * UNREAD MESSAGE COUNTS
+   * ====================================================
+   */
+
+  const loadUnreadCounts = async (
+    userId = session?.user?.id,
+    matchList = matches
+  ) => {
+    if (
+      !userId ||
+      !matchList ||
+      matchList.length === 0
+    ) {
+      setUnreadCounts({});
+      return;
+    }
+
+    const matchIds = matchList.map(
+      (match) => match.id
+    );
+
+    const { data, error } =
+      await supabase
+        .from("messages")
+        .select("match_id")
+        .in("match_id", matchIds)
+        .neq("sender_id", userId)
+        .eq("seen", false);
+
+    if (error) {
+      console.error(
+        "Unread count load error:",
+        error
+      );
+      return;
+    }
+
+    const counts = {};
+
+    (data || []).forEach(
+      (message) => {
+        counts[message.match_id] =
+          (counts[message.match_id] || 0) + 1;
+      }
+    );
+
+    setUnreadCounts(counts);
   };
 
   /*
@@ -710,6 +792,14 @@ function App() {
   const openChat = async (
     match
   ) => {
+    // Clear unread badge immediately
+    setUnreadCounts(
+      (previous) => ({
+        ...previous,
+        [match.id]: 0,
+      })
+    );
+
     setActiveMatch(match);
     setMessages([]);
     setRevealRequest(null);
@@ -768,7 +858,9 @@ function App() {
     }
 
     const channel = supabase
-      .channel(`vibematch-messages-${match.id}`)
+      .channel(
+        `vibematch-messages-${match.id}`
+      )
       .on(
         "postgres_changes",
         {
@@ -781,16 +873,21 @@ function App() {
           const newMessage = payload.new;
 
           setMessages((previous) => {
-            const alreadyExists = previous.some(
-              (message) =>
-                message.id === newMessage.id
-            );
+            const alreadyExists =
+              previous.some(
+                (message) =>
+                  message.id ===
+                  newMessage.id
+              );
 
             if (alreadyExists) {
               return previous;
             }
 
-            return [...previous, newMessage];
+            return [
+              ...previous,
+              newMessage,
+            ];
           });
 
           if (
@@ -802,6 +899,13 @@ function App() {
               {
                 p_match_id: match.id,
               }
+            );
+
+            setUnreadCounts(
+              (previous) => ({
+                ...previous,
+                [match.id]: 0,
+              })
             );
           }
         }
@@ -841,6 +945,13 @@ function App() {
           }
         );
       }
+
+      setUnreadCounts(
+        (previous) => ({
+          ...previous,
+          [matchId]: 0,
+        })
+      );
     }
 
     setLoadingMessages(false);
@@ -1455,6 +1566,7 @@ function App() {
     setSession(null);
     setQuestionnaireDone(false);
     setMatches([]);
+    setUnreadCounts({});
     setNotifications([]);
     setActiveMatch(null);
     setMessages([]);
@@ -1711,7 +1823,9 @@ function App() {
             }}
           >
             <div>Built by Manoj Prajapat</div>
-            <div>Mathematics and Computing · IIT Ropar</div>
+            <div>
+              Mathematics and Computing · IIT Ropar
+            </div>
           </div>
         </div>
       </div>
@@ -2346,8 +2460,7 @@ function App() {
                     "right",
                   fontSize:
                     "12px",
-                  opacity:
-                    0.6,
+                  opacity: 0.6,
                   marginTop:
                     "5px",
                 }}
@@ -2634,10 +2747,62 @@ function App() {
                           "🤝"}
                       </div>
 
-                      <h3>
-                        {
-                          anonymousName
-                        }
+                      <h3
+                        style={{
+                          display:
+                            "flex",
+                          alignItems:
+                            "center",
+                          justifyContent:
+                            "center",
+                          gap:
+                            "7px",
+                        }}
+                      >
+                        <span>
+                          {
+                            anonymousName
+                          }
+                        </span>
+
+                        {unreadCounts[
+                          match.id
+                        ] > 0 && (
+                          <span
+                            style={{
+                              display:
+                                "inline-flex",
+                              alignItems:
+                                "center",
+                              justifyContent:
+                                "center",
+                              minWidth:
+                                "20px",
+                              height:
+                                "20px",
+                              padding:
+                                "0 6px",
+                              borderRadius:
+                                "999px",
+                              background:
+                                "#ef4444",
+                              color:
+                                "white",
+                              fontSize:
+                                "11px",
+                              fontWeight:
+                                "700",
+                              lineHeight:
+                                "1",
+                            }}
+                          >
+                            {
+                              unreadCounts[
+                                match.id
+                              ]
+                            }
+                          </span>
+                        )}
                       </h3>
 
                       <div className="match-percentage">

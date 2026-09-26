@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import "./App.css";
+import CommunitiesSection from "./Communities.jsx";
+
+// Set to false to restore the existing application without changing its data.
+const MAINTENANCE_MODE = true;
 
 const questions = [
   {
@@ -75,6 +79,55 @@ const questions = [
   },
 ];
 
+const friendConnectionQuestion = {
+  id: 8,
+  text: "How do you currently feel with your friends?",
+  options: [
+    "I feel connected and comfortable",
+    "It's okay, but I don't feel very connected",
+    "I mostly stay quiet",
+    "I feel like I don't really fit in",
+    "I want to find people I genuinely connect with",
+    "Other",
+  ],
+};
+
+// Reuses the optional free-text question already present in the previous onboarding.
+// Keep this configuration in one place so the Q9 wording can be revised later.
+const optionalQuestion = {
+  id: 9,
+  text: "Tell us something about yourself so that we get the best vibe. 💭",
+  description:
+    "This is optional — tell us anything that helps us understand your vibe better.",
+  placeholder: "Anything interesting about you...",
+  maxLength: 500,
+};
+
+const icebreakerPrompts = [
+  "What’s one thing you’re excited about this week?",
+  "What song have you had on repeat lately?",
+  "What’s your ideal way to spend a free evening?",
+  "What’s a small thing that always makes your day better?",
+  "If you could learn any skill this semester, what would it be?",
+  "What’s the best thing you’ve watched recently?",
+  "What campus spot do you think more people should know about?",
+  "Would you rather plan a trip or go on a spontaneous one?",
+  "What’s something you could talk about for hours?",
+];
+
+const conversationTopics = [
+  "🎵 Music you’re listening to",
+  "🎬 Shows, films, and recommendations",
+  "📍 Favourite campus spots",
+  "✈️ Places you want to explore",
+];
+
+const replyPrompts = [
+  "That sounds fun! How did you get into it?",
+  "I’m curious—what do you like most about that?",
+  "Same here 😊 What’s your favourite one?",
+];
+
 const branches = [
   "Computer Science & Engineering (CSE)",
   "Electrical Engineering (EE)",
@@ -102,6 +155,9 @@ const anonymousNameParts = [
   "VibeMate",
 ];
 
+const VAPID_PUBLIC_KEY =
+  "BJcZ_NUj544QBesIh4aDKoQkmzY1faaIZt6kHwwDWLK3sqJpsGOM4qUHracDM9IGKzMscg5dHzBWHSrAkMdgru4";
+
 const getAnonymousName = (userId) => {
   if (!userId) return "VibeBuddy_27";
 
@@ -123,7 +179,37 @@ const getAnonymousName = (userId) => {
   return `${anonymousNameParts[partIndex]}_${number}`;
 };
 
-function App() {
+/*
+ * ====================================================
+ * VAPID PUBLIC KEY CONVERTER
+ * ====================================================
+ */
+
+const urlBase64ToUint8Array = (base64String) => {
+  const padding =
+    "=".repeat(
+      (4 - (base64String.length % 4)) % 4
+    );
+
+  const base64 =
+    (
+      base64String +
+      padding
+    )
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+
+  const rawData = window.atob(base64);
+
+  return Uint8Array.from(
+    [...rawData].map(
+      (character) =>
+        character.charCodeAt(0)
+    )
+  );
+};
+
+function AppContent({ theme, onToggleTheme }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -136,11 +222,14 @@ function App() {
   const [ideaAnswer, setIdeaAnswer] = useState("");
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [questionnaireDone, setQuestionnaireDone] = useState(false);
+  const [hasExistingAnswers, setHasExistingAnswers] = useState(false);
   const [savingAnswers, setSavingAnswers] = useState(false);
 
   // Matches
   const [matches, setMatches] = useState([]);
   const [activeMatch, setActiveMatch] = useState(null);
+  const [blockedMatchIds, setBlockedMatchIds] = useState([]);
+  const [randomIcebreaker, setRandomIcebreaker] = useState("");
 
   // Unread messages
   const [unreadCounts, setUnreadCounts] = useState({});
@@ -157,6 +246,7 @@ function App() {
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [dashboardTab, setDashboardTab] = useState("matches");
 
   // Reveal
   const [revealRequest, setRevealRequest] = useState(null);
@@ -213,9 +303,14 @@ function App() {
 
         if (newSession?.user) {
           await finishUserSetup(newSession.user);
-        } else {
+      } else {
+          setHasExistingAnswers(false);
           setQuestionnaireDone(false);
+          setCurrentQuestion(0);
+          setAnswers({});
+          setIdeaAnswer("");
           setMatches([]);
+          setBlockedMatchIds([]);
           setUnreadCounts({});
           setNotifications([]);
           setActiveMatch(null);
@@ -365,9 +460,9 @@ function App() {
     }
 
     if (data) {
-      setQuestionnaireDone(true);
+      setHasExistingAnswers(true);
 
-      setAnswers({
+      const savedAnswers = {
         1: data.q1 - 1,
         2: data.q2 - 1,
         3: data.q3 - 1,
@@ -375,13 +470,42 @@ function App() {
         5: data.q5 - 1,
         6: data.q6 - 1,
         7: data.q7 - 1,
-      });
+      };
+
+      const { data: extension, error: extensionError } = await supabase
+        .from("vibe_answer_extensions")
+        .select("q8,q9_answer")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (extensionError) {
+        console.error("Onboarding extension load error:", extensionError);
+      }
+
+      if (extension?.q8) {
+        savedAnswers[8] = extension.q8 - 1;
+      }
+
+      setAnswers(savedAnswers);
 
       setIdeaAnswer(
-        data.idea_answer || ""
+        extension?.q9_answer ?? data.idea_answer ?? ""
       );
 
-      await loadMatches(userId);
+      if (extension?.q8) {
+        setQuestionnaireDone(true);
+        await loadMatches(userId);
+      } else {
+        // Existing Q1–Q7 respondents continue at mandatory Q8 without re-answering.
+        setQuestionnaireDone(false);
+        setCurrentQuestion(7);
+      }
+    } else {
+      setHasExistingAnswers(false);
+      setQuestionnaireDone(false);
+      setCurrentQuestion(0);
+      setAnswers({});
+      setIdeaAnswer("");
     }
   };
 
@@ -441,6 +565,296 @@ function App() {
 
   /*
    * ====================================================
+   * WEB PUSH NOTIFICATIONS
+   * ====================================================
+   */
+   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  
+  const enablePushNotifications =
+    async () => {
+      try {
+        if (!session?.user) {
+          alert(
+            "Please login first."
+          );
+          return;
+        }
+
+        if (
+          !("Notification" in window)
+        ) {
+          alert(
+            "This browser does not support notifications."
+          );
+          return;
+        }
+
+        if (
+          !("serviceWorker" in navigator)
+        ) {
+          alert(
+            "Service Worker is not supported in this browser."
+          );
+          return;
+        }
+
+        if (
+          !("PushManager" in window)
+        ) {
+          alert(
+            "Push notifications are not supported in this browser."
+          );
+          return;
+        }
+
+        const permission =
+          await Notification.requestPermission();
+
+        if (
+          permission !== "granted"
+        ) {
+          alert(
+            "Notification permission was not granted."
+          );
+          return;
+        }
+
+        const registration =
+          await navigator.serviceWorker.ready;
+
+        let subscription =
+          await registration.pushManager.getSubscription();
+
+        if (!subscription) {
+          subscription =
+            await registration.pushManager.subscribe(
+              {
+                userVisibleOnly: true,
+                applicationServerKey:
+                  urlBase64ToUint8Array(
+                    VAPID_PUBLIC_KEY
+                  ),
+              }
+            );
+        }
+
+        const subscriptionJSON =
+          subscription.toJSON();
+
+        const endpoint =
+          subscriptionJSON.endpoint;
+
+        if (!endpoint) {
+          alert(
+            "Could not create notification subscription."
+          );
+          return;
+        }
+
+        /*
+         * Check whether this browser subscription
+         * is already saved for this user.
+         */
+        const {
+          data: existingSubscriptions,
+          error:
+            existingSubscriptionError,
+        } = await supabase
+          .from("push_subscriptions")
+          .select(
+            "id, subscription"
+          )
+          .eq(
+            "user_id",
+            session.user.id
+          );
+
+        if (
+          existingSubscriptionError
+        ) {
+          console.error(
+            "Existing push subscription load error:",
+            existingSubscriptionError
+          );
+        }
+
+        const existing =
+          (
+            existingSubscriptions ||
+            []
+          ).find(
+            (item) =>
+              item.subscription
+                ?.endpoint === endpoint
+          );
+
+        if (existing) {
+          const {
+            error: updateError,
+          } = await supabase
+            .from("push_subscriptions")
+            .update({
+              subscription:
+                subscriptionJSON,
+              updated_at:
+                new Date().toISOString(),
+            })
+            .eq(
+              "id",
+              existing.id
+            );
+
+          if (updateError) {
+            console.error(
+              "Push subscription update error:",
+              updateError
+            );
+
+            alert(
+              "Notification setup failed."
+            );
+
+            return;
+          }
+        } else {
+          const {
+            error: insertError,
+          } = await supabase
+            .from("push_subscriptions")
+            .insert({
+              user_id:
+                session.user.id,
+              subscription:
+                subscriptionJSON,
+            });
+
+          if (insertError) {
+            console.error(
+              "Push subscription save error:",
+              insertError
+            );
+
+            /*
+             * This can happen if the same browser
+             * endpoint already exists in the table.
+             */
+            if (
+              insertError.code ===
+              "23505"
+            ) {
+              alert(
+                "🔔 Notifications are already enabled on this browser."
+              );
+            } else {
+              alert(
+                "Notification setup failed. Please try again."
+              );
+            }
+
+            return;
+          }
+        }
+        setNotificationsEnabled(true);
+        alert(
+          "🔔 Notifications enabled successfully!"
+        );
+      } catch (error) {
+        console.error(
+          "Push notification error:",
+          error
+        );
+
+        alert(
+          "Something went wrong while enabling notifications."
+        );
+      }
+    };
+const disablePushNotifications = async () => {
+  try {
+    if (!session?.user) {
+      alert("Please login first.");
+      return;
+    }
+
+    const registration =
+      await navigator.serviceWorker.ready;
+
+    const subscription =
+      await registration.pushManager.getSubscription();
+
+    if (!subscription) {
+      setNotificationsEnabled(false);
+      return;
+    }
+
+    const endpoint =
+      subscription.endpoint;
+
+    // Database se current browser subscription find karo
+    const {
+      data: subscriptions,
+      error: loadError,
+    } = await supabase
+      .from("push_subscriptions")
+      .select("id, subscription")
+      .eq(
+        "user_id",
+        session.user.id
+      );
+
+    if (loadError) {
+      console.error(
+        "Push subscription load error:",
+        loadError
+      );
+      alert("Could not turn off notifications.");
+      return;
+    }
+
+    const existing =
+      (subscriptions || []).find(
+        (item) =>
+          item.subscription?.endpoint ===
+          endpoint
+      );
+
+    // Database se subscription remove karo
+    if (existing) {
+      const { error: deleteError } =
+        await supabase
+          .from("push_subscriptions")
+          .delete()
+          .eq("id", existing.id);
+
+      if (deleteError) {
+        console.error(
+          "Push subscription delete error:",
+          deleteError
+        );
+        alert("Could not turn off notifications.");
+        return;
+      }
+    }
+
+    // Browser ki push subscription bhi remove karo
+    await subscription.unsubscribe();
+
+    setNotificationsEnabled(false);
+
+    alert("🔕 Notifications turned off.");
+  } catch (error) {
+    console.error(
+      "Disable push notification error:",
+      error
+    );
+
+    alert(
+      "Something went wrong while turning off notifications."
+    );
+  }
+};
+  /*
+   * ====================================================
    * MATCHES
    * ====================================================
    */
@@ -475,11 +889,34 @@ function App() {
       return;
     }
 
+    const { data: blockRows } = await supabase
+      .from("user_blocks")
+      .select("blocker_id,blocked_user_id")
+      .or(`blocker_id.eq.${userId},blocked_user_id.eq.${userId}`);
+    const blockedUsers = new Set((blockRows || []).map((row) =>
+      row.blocker_id === userId ? row.blocked_user_id : row.blocker_id
+    ));
+
+    const { data: myAnswers } = await supabase
+      .from("vibe_answers")
+      .select("q1,q2,q3,q4,q5,q6,q7")
+      .eq("user_id", userId)
+      .maybeSingle();
+
     const otherUserIds = data.map(
       (match) =>
         match.user1_id === userId
           ? match.user2_id
           : match.user1_id
+    );
+
+    const { data: theirAnswers } = await supabase
+      .from("vibe_answers")
+      .select("user_id,q1,q2,q3,q4,q5,q6,q7")
+      .in("user_id", otherUserIds);
+
+    const answerMap = Object.fromEntries(
+      (theirAnswers || []).map((row) => [row.user_id, row])
     );
 
     /*
@@ -568,7 +1005,10 @@ function App() {
      * Format matches.
      */
     const formattedMatches =
-      data.map((match) => {
+      data.filter((match) => {
+        const otherUserId = match.user1_id === userId ? match.user2_id : match.user1_id;
+        return !blockedUsers.has(otherUserId) && !blockedMatchIds.includes(match.id);
+      }).map((match) => {
         const otherUserId =
           match.user1_id === userId
             ? match.user2_id
@@ -589,6 +1029,16 @@ function App() {
                 ),
               avatar_emoji: "🤝",
             },
+          sharedVibes: myAnswers && answerMap[otherUserId]
+            ? questions.slice(0, 7).flatMap((question) => {
+                const column = `q${question.id}`;
+                const myChoice = myAnswers[column];
+                const theirChoice = answerMap[otherUserId][column];
+                return myChoice && theirChoice && myChoice === theirChoice
+                  ? [question.options[myChoice - 1]?.replace(/^\S+\s*/, "")]
+                  : [];
+              }).slice(0, 3)
+            : [],
         };
       });
 
@@ -708,6 +1158,11 @@ function App() {
       }
     }
 
+    if (answers[8] === undefined) {
+      alert("Please answer the friends question before continuing.");
+      return;
+    }
+
     setSavingAnswers(true);
 
     const {
@@ -726,38 +1181,51 @@ function App() {
       return;
     }
 
-    const { error } =
-      await supabase
-        .from("vibe_answers")
-        .upsert(
-          {
-            user_id: user.id,
-            q1: answers[1] + 1,
-            q2: answers[2] + 1,
-            q3: answers[3] + 1,
-            q4: answers[4] + 1,
-            q5: answers[5] + 1,
-            q6: answers[6] + 1,
-            q7: answers[7] + 1,
-            idea_answer:
-              ideaAnswer.trim() || null,
-            completed_at:
-              new Date().toISOString(),
-          },
-          {
-            onConflict: "user_id",
-          }
-        );
-
-    if (error) {
-      console.error(
-        "Save answers error:",
-        error
+    const { error: extensionError } = await supabase
+      .from("vibe_answer_extensions")
+      .upsert(
+        {
+          user_id: user.id,
+          q8: answers[8] + 1,
+          q9_answer: ideaAnswer.trim() || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
       );
 
-      alert(error.message);
+    if (extensionError) {
+      console.error(
+        "Save onboarding extension error:",
+        extensionError
+      );
+      alert(extensionError.message);
       setSavingAnswers(false);
       return;
+    }
+
+    // Never update an existing Q1–Q7 row: its update trigger can alter matching state.
+    if (!hasExistingAnswers) {
+      const { error: baseInsertError } = await supabase
+        .from("vibe_answers")
+        .insert({
+          user_id: user.id,
+          q1: answers[1] + 1,
+          q2: answers[2] + 1,
+          q3: answers[3] + 1,
+          q4: answers[4] + 1,
+          q5: answers[5] + 1,
+          q6: answers[6] + 1,
+          q7: answers[7] + 1,
+        });
+
+      if (baseInsertError && baseInsertError.code !== "23505") {
+        console.error("Insert Q1–Q7 answers error:", baseInsertError);
+        alert(baseInsertError.message);
+        setSavingAnswers(false);
+        return;
+      }
+
+      setHasExistingAnswers(true);
     }
 
     setQuestionnaireDone(true);
@@ -880,12 +1348,72 @@ function App() {
     setShowNotifications(false);
     setIsOtherOnline(false);
     setIsOtherTyping(false);
+    setRandomIcebreaker("");
 
     await loadMessages(match.id);
     await loadRevealStatus(match);
     setupPresence(match);
     setupMessageRealtime(match);
   };
+
+  const blockMatch = async (match) => {
+    if (!session?.user || !window.confirm("Block this person? They will disappear from your matches and won’t be able to message you.")) return;
+    const { error } = await supabase.from("user_blocks").insert({
+      blocker_id: session.user.id,
+      blocked_user_id: match.otherUserId,
+    });
+    if (error && error.code !== "23505") {
+      alert("Could not block this person. Please try again.");
+      return;
+    }
+    setBlockedMatchIds((previous) => [...new Set([...previous, match.id])]);
+    setMatches((previous) => previous.filter((item) => item.id !== match.id));
+    closeChat();
+  };
+
+  const reportMatch = async (match) => {
+    const reason = window.prompt("Why are you reporting this person? (e.g. harassment, spam, inappropriate content)");
+    if (!reason?.trim() || !session?.user) return;
+    const { error } = await supabase.from("user_reports").insert({
+      reporter_id: session.user.id,
+      reported_user_id: match.otherUserId,
+      match_id: match.id,
+      reason: reason.trim().slice(0, 500),
+    });
+    if (error) {
+      alert("Could not submit your report. Please try again.");
+      return;
+    }
+    alert("Report submitted. Thank you for helping keep VibeMatch safe.");
+  };
+  useEffect(() => {
+  const matchId =
+    new URLSearchParams(
+      window.location.search
+    ).get("matchId");
+
+  if (!matchId || !matches.length) {
+    return;
+  }
+
+  const match = matches.find(
+    (item) =>
+      String(item.id) === String(matchId)
+  );
+
+  if (!match) {
+    return;
+  }
+
+  openChat(match);
+
+  // URL se matchId hata do
+  window.history.replaceState(
+    {},
+    "",
+    window.location.pathname
+  );
+}, [matches]);
 
   const closeChat = () => {
     setActiveMatch(null);
@@ -1041,57 +1569,68 @@ function App() {
     setLoadingMessages(false);
   };
 
-  const sendMessage = async () => {
-    const text =
-      messageText.trim();
+const sendMessage = async (prefilledText, targetMatch = activeMatch) => {
+  const text = (prefilledText ?? messageText).trim();
 
-    if (
-      !text ||
-      !activeMatch ||
-      !session?.user
-    ) {
-      return;
-    }
+  if (!text || !targetMatch || !session?.user) {
+    return;
+  }
 
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("messages")
-      .insert({
-        match_id:
-          activeMatch.id,
-        sender_id:
-          session.user.id,
-        message: text,
-      })
-      .select()
-      .single();
+  // Input turant clear
+  setMessageText("");
+  stopTyping();
 
-    if (error) {
-      console.error(
-        "Send message error:",
-        error
-      );
+  const { error } = await supabase
+    .from("messages")
+    .insert({
+      match_id: targetMatch.id,
+      sender_id: session.user.id,
+      message: text,
+    });
 
-      alert(
-        "Message send nahi hua. Agar 24 hours expire ho gaye hain, pehle profile reveal complete karo."
-      );
+  if (error) {
+    console.error("Send message error:", error);
 
-      return;
-    }
+    // Agar message fail hua to text wapas dikha do
+    setMessageText(text);
 
-    setMessages(
-      (previous) => [
-        ...previous,
-        data,
-      ]
+    alert(
+      "Message send nahi hua. Agar 24 hours expire ho gaye hain, pehle profile reveal complete karo."
     );
 
-    setMessageText("");
+    return;
+  }
 
-    stopTyping();
-  };
+  const receiverUserId =
+    targetMatch.user1_id === session.user.id
+      ? targetMatch.user2_id
+      : targetMatch.user1_id;
+
+  // Push notification ko message sending ko block nahi karne dena
+  supabase.functions
+    .invoke("send-push", {
+      body: {
+        targetUserId: receiverUserId,
+        title: `New message from ${getAnonymousName(session.user.id)} 💬`,
+        message: text.length > 120 ? `${text.slice(0, 117)}…` : text,
+        matchId: targetMatch.id,
+      },
+    })
+    .then(({ error: pushError }) => {
+      if (pushError) {
+        console.error(
+          "Push notification failed:",
+          pushError
+        );
+      }
+  });
+};
+
+const startChatWithMessage = async (match, text) => {
+  await openChat(match);
+  await sendMessage(text, match);
+};
+
 
   /*
    * ====================================================
@@ -1653,6 +2192,7 @@ function App() {
     setMessages([]);
     setAnswers({});
     setIdeaAnswer("");
+    setHasExistingAnswers(false);
     setFullName("");
     setBranch("");
     setCurrentQuestion(0);
@@ -1669,6 +2209,7 @@ function App() {
   if (loading) {
     return (
       <div className="app">
+        <div className="theme-screen-toggle"><ThemeToggle theme={theme} onToggle={onToggleTheme} /></div>
         <div className="landing-card">
           <div className="landing-emoji">
             🤝
@@ -1693,6 +2234,7 @@ function App() {
   if (!session) {
     return (
       <div className="app">
+        <div className="theme-screen-toggle"><ThemeToggle theme={theme} onToggle={onToggleTheme} /></div>
         <div className="landing-card">
           <div className="landing-emoji">
             🤝
@@ -1957,6 +2499,8 @@ function App() {
               ←
             </button>
 
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+
             <div className="chat-user-info">
               <div className="chat-avatar">
                 {isRevealed
@@ -2046,6 +2590,10 @@ function App() {
               activeMatch.match_percentage
             }
             % vibe match
+            <div className="chat-safety-actions">
+              <button type="button" onClick={() => reportMatch(activeMatch)}>Report</button>
+              <button type="button" onClick={() => blockMatch(activeMatch)}>Block</button>
+            </div>
           </div>
 
           <div className="messages-area">
@@ -2066,17 +2614,23 @@ function App() {
                 </div>
 
                 <h3>
-                  Say hello!
+                  🎉 You found a vibe!
                 </h3>
 
                 <p>
-                  You both have a
-                  similar vibe.
-                  <br />
-                  Start the
-                  conversation
-                  anonymously.
+                  You both matched {activeMatch.match_percentage}% on your vibe answers. Start chatting anonymously.
                 </p>
+                <div className="icebreaker-list">
+                  {icebreakerPrompts.slice(0, 3).map((prompt) => (
+                    <button key={prompt} type="button" onClick={() => sendMessage(prompt)}>{prompt}</button>
+                  ))}
+                </div>
+                <button className="random-prompt-btn" type="button" onClick={() => { const options = icebreakerPrompts.filter((item) => item !== randomIcebreaker); const prompt = options[Math.floor(Math.random() * options.length)]; setRandomIcebreaker(prompt); sendMessage(prompt); }}>🎲 Random icebreaker</button>
+                {randomIcebreaker && <small className="random-prompt-label">Random opener loaded in the message box 👇</small>}
+                <div className="topic-list">
+                  <strong>Easy topics to start with</strong>
+                  <div>{conversationTopics.map((topic) => <span key={topic}>{topic}</span>)}</div>
+                </div>
               </div>
             ) : (
               messages.map(
@@ -2147,6 +2701,15 @@ function App() {
               </div>
             )}
           </div>
+
+          {messages.length > 0 && !isExpired && (
+            <div className="reply-prompts">
+              <span>Need a reply?</span>
+              {replyPrompts.map((prompt) => (
+                <button key={prompt} type="button" onClick={() => sendMessage(prompt)}>{prompt}</button>
+              ))}
+            </div>
+          )}
 
           {isExpired &&
             !isRevealed && (
@@ -2409,26 +2972,27 @@ function App() {
   if (!questionnaireDone) {
     const isQuestion8 =
       currentQuestion === 7;
+    const isQuestion9 = currentQuestion === 8;
 
     const question =
-      questions[currentQuestion];
+      isQuestion8
+        ? friendConnectionQuestion
+        : questions[currentQuestion];
 
     const isLastQuestion =
-      currentQuestion === 7;
+      isQuestion9;
 
     return (
       <div className="app">
-        <div className="questionnaire-card">
+        <div className="theme-screen-toggle"><ThemeToggle theme={theme} onToggle={onToggleTheme} /></div>
+        <div className="questionnaire-card onboarding-v2">
           <div className="logo">
             Vibe🤝Match
           </div>
 
           <div className="progress-text">
-            {isQuestion8
-              ? "Final Question"
-              : `Question ${
-                  currentQuestion + 1
-                } / 8`}
+            {`Question ${currentQuestion + 1} / 9`}
+            {isQuestion9 ? " · Optional" : ""}
           </div>
 
           <div className="progress-bar">
@@ -2437,14 +3001,14 @@ function App() {
               style={{
                 width: `${
                   ((currentQuestion + 1) /
-                    8) *
+                    9) *
                   100
                 }%`,
               }}
             />
           </div>
 
-          {!isQuestion8 ? (
+          {!isQuestion9 ? (
             <>
               <h2>
                 {question.text}
@@ -2480,11 +3044,7 @@ function App() {
             </>
           ) : (
             <>
-              <h2>
-                Tell us something about
-                yourself so that we get
-                the best vibe. 💭
-              </h2>
+              <h2>{optionalQuestion.text}</h2>
 
               <p
                 style={{
@@ -2500,9 +3060,7 @@ function App() {
                     "18px",
                 }}
               >
-                This is optional — tell us
-                anything that helps us
-                understand your vibe better.
+                {optionalQuestion.description}
               </p>
 
               <textarea
@@ -2512,8 +3070,8 @@ function App() {
                     e.target.value
                   )
                 }
-                maxLength={500}
-                placeholder="Anything interesting about you..."
+                maxLength={optionalQuestion.maxLength}
+                placeholder={optionalQuestion.placeholder}
                 rows={7}
                 style={{
                   width:
@@ -2547,7 +3105,7 @@ function App() {
                 {
                   ideaAnswer.length
                 }
-                /500
+                /{optionalQuestion.maxLength}
               </div>
             </>
           )}
@@ -2585,9 +3143,7 @@ function App() {
               <button
                 className="primary-btn"
                 disabled={
-                  answers[
-                    question.id
-                  ] === undefined
+                  answers[question.id] === undefined
                 }
                 onClick={() =>
                   setCurrentQuestion(
@@ -2599,19 +3155,22 @@ function App() {
                 Next →
               </button>
             ) : (
-              <button
-                className="primary-btn"
-                disabled={
-                  savingAnswers
-                }
-                onClick={
-                  submitAnswers
-                }
-              >
-                {savingAnswers
-                  ? "Finding..."
-                  : "Find My Vibe 🤝"}
-              </button>
+              <div className="onboarding-final-actions">
+                <button
+                  className="secondary-btn skip-question-btn"
+                  disabled={savingAnswers}
+                  onClick={submitAnswers}
+                >
+                  Skip for now
+                </button>
+                <button
+                  className="primary-btn"
+                  disabled={savingAnswers}
+                  onClick={submitAnswers}
+                >
+                  {savingAnswers ? "Finding..." : "Find My Vibe 🤝"}
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -2640,6 +3199,26 @@ function App() {
           </div>
 
           <div className="header-actions">
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+            {typeof Notification !==
+              "undefined" && (
+                <button
+                  className="notification-btn"
+                 onClick={
+  async () => {
+    if (notificationsEnabled) {
+  await disablePushNotifications();
+} else {
+  await enablePushNotifications();
+}
+  }
+}
+                  title="Enable browser notifications"
+                >
+                  {notificationsEnabled ? "🔔" : "🔕"}
+                </button>
+              )}
+
             <button
               className="notification-btn"
               onClick={
@@ -2760,6 +3339,12 @@ function App() {
           </div>
         )}
 
+        <nav className="dashboard-tabs" aria-label="Main sections">
+          <button className={dashboardTab === "matches" ? "active" : ""} onClick={() => setDashboardTab("matches")}>✨ Vibe Matches</button>
+          <button className={dashboardTab === "communities" ? "active" : ""} onClick={() => setDashboardTab("communities")}>👥 Communities</button>
+        </nav>
+
+        {dashboardTab === "communities" ? <CommunitiesSection /> : <>
         <div className="welcome-card">
           <h2>
             Hey 👋
@@ -2896,15 +3481,31 @@ function App() {
                         Anonymous
                       </div>
 
+                      <h4 className="found-vibe">🎉 You found a vibe!</h4>
+                      <div className="shared-vibes">
+                        <strong>Why you matched</strong>
+                        <p>{match.sharedVibes?.length
+                          ? `You both chose similar answers for ${match.sharedVibes.join(", ")}.`
+                          : `Your answers are ${match.match_percentage}% compatible. Say hi to discover what you have in common.`}</p>
+                      </div>
+
+                      <div className="card-icebreakers">
+                        <strong>Try an icebreaker</strong>
+                        {icebreakerPrompts.slice(0, 3).map((prompt) => (
+                          <button key={prompt} type="button" onClick={() => startChatWithMessage(match, prompt)}>💬 {prompt}</button>
+                        ))}
+                        <button className="random-icebreaker" type="button" onClick={() => { const prompt = icebreakerPrompts[Math.floor(Math.random() * icebreakerPrompts.length)]; startChatWithMessage(match, prompt); }}>🎲 Random icebreaker</button>
+                      </div>
+
                       <button
                         className="primary-btn"
                         onClick={() =>
-                          openChat(
-                            match
-                          )
+                          {
+                            startChatWithMessage(match, "Hey! 👋 Glad we matched. What’s something you’re into lately?");
+                          }
                         }
                       >
-                        💬 Chat
+                        👋 Say Hi
                       </button>
                     </div>
                   );
@@ -2913,7 +3514,74 @@ function App() {
             </div>
           )}
         </section>
+        </>}
       </div>
+    </div>
+  );
+}
+
+function ThemeToggle({ theme, onToggle }) {
+  const isDark = theme === "dark";
+  return (
+    <button
+      className="theme-toggle"
+      type="button"
+      onClick={onToggle}
+      aria-pressed={isDark}
+      aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
+      title={`Switch to ${isDark ? "light" : "dark"} mode`}
+    >
+      <span aria-hidden="true">{isDark ? "☀️" : "🌙"}</span>
+      <span>{isDark ? "Light mode" : "Dark mode"}</span>
+    </button>
+  );
+}
+
+function MaintenancePage({ theme, onToggleTheme }) {
+  return (
+    <main className="app maintenance-page">
+      <section className="maintenance-card" aria-labelledby="maintenance-title">
+        <div className="maintenance-theme-toggle"><ThemeToggle theme={theme} onToggle={onToggleTheme} /></div>
+        <h1 id="maintenance-title">🚧 Vibe🤝Match is getting an upgrade!</h1>
+        <div className="maintenance-copy">
+          <p>We’re currently working on a new and improved version of Vibe🤝Match.</p>
+          <p>We’re making some improvements to make the matching and conversation experience even better. ❤️</p>
+          <p>The website will be temporarily unavailable for a few days while we work on the upgrade.</p>
+          <p className="maintenance-coming-soon">A new version is coming soon… 👀🔥</p>
+        </div>
+        <p className="maintenance-stay-tuned">Stay tuned!</p>
+        <div className="maintenance-brand">Vibe🤝Match 2.0 🤝</div>
+      </section>
+    </main>
+  );
+}
+
+function App() {
+  const [theme, setTheme] = useState(() => {
+    try {
+      return window.localStorage.getItem("vibematch-theme") === "dark" ? "dark" : "light";
+    } catch {
+      return "light";
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    try {
+      window.localStorage.setItem("vibematch-theme", theme);
+    } catch {
+      // Keep the in-memory theme if browser storage is unavailable.
+    }
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((current) => current === "dark" ? "light" : "dark");
+
+  return (
+    <div className="theme-root" data-theme={theme}>
+      {MAINTENANCE_MODE
+        ? <MaintenancePage theme={theme} onToggleTheme={toggleTheme} />
+        : <AppContent theme={theme} onToggleTheme={toggleTheme} />}
     </div>
   );
 }

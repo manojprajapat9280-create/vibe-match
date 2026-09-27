@@ -230,6 +230,7 @@ function AppContent({ theme, onToggleTheme }) {
   const [activeMatch, setActiveMatch] = useState(null);
   const [blockedMatchIds, setBlockedMatchIds] = useState([]);
   const [randomIcebreaker, setRandomIcebreaker] = useState("");
+  const [showChatIcebreakers, setShowChatIcebreakers] = useState(false);
 
   // Unread messages
   const [unreadCounts, setUnreadCounts] = useState({});
@@ -1626,12 +1627,6 @@ const sendMessage = async (prefilledText, targetMatch = activeMatch) => {
   });
 };
 
-const startChatWithMessage = async (match, text) => {
-  await openChat(match);
-  await sendMessage(text, match);
-};
-
-
   /*
    * ====================================================
    * 24 HOUR TIMER
@@ -2913,7 +2908,23 @@ const startChatWithMessage = async (match, text) => {
               </div>
             )}
 
+          {showChatIcebreakers && (
+            <div className="chat-icebreaker-picker" aria-label="Icebreaker prompts">
+              <strong>Pick a conversation starter</strong>
+              <div>
+                {icebreakerPrompts.slice(0, 3).map((prompt) => (
+                  <button key={prompt} type="button" onClick={() => { sendMessage(prompt); setShowChatIcebreakers(false); }}>
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="chat-input-area">
+            <button className="chat-icebreakers-toggle" type="button" aria-expanded={showChatIcebreakers} onClick={() => setShowChatIcebreakers((open) => !open)}>
+              ✨ Icebreakers
+            </button>
             <input
               type="text"
               value={messageText}
@@ -3489,24 +3500,17 @@ const startChatWithMessage = async (match, text) => {
                           : `Your answers are ${match.match_percentage}% compatible. Say hi to discover what you have in common.`}</p>
                       </div>
 
-                      <div className="card-icebreakers">
-                        <strong>Try an icebreaker</strong>
-                        {icebreakerPrompts.slice(0, 3).map((prompt) => (
-                          <button key={prompt} type="button" onClick={() => startChatWithMessage(match, prompt)}>💬 {prompt}</button>
-                        ))}
-                        <button className="random-icebreaker" type="button" onClick={() => { const prompt = icebreakerPrompts[Math.floor(Math.random() * icebreakerPrompts.length)]; startChatWithMessage(match, prompt); }}>🎲 Random icebreaker</button>
+                      <div className="match-card-actions">
+                        <button className="primary-btn match-chat-button" type="button" onClick={() => { setShowChatIcebreakers(false); openChat(match); }}>
+                          💬 Start Chat
+                        </button>
+                        <button className="match-icebreaker-button" type="button" onClick={() => {
+                          openChat(match);
+                          setShowChatIcebreakers(true);
+                        }}>
+                          ✨ Icebreakers
+                        </button>
                       </div>
-
-                      <button
-                        className="primary-btn"
-                        onClick={() =>
-                          {
-                            startChatWithMessage(match, "Hey! 👋 Glad we matched. What’s something you’re into lately?");
-                          }
-                        }
-                      >
-                        👋 Say Hi
-                      </button>
                     </div>
                   );
                 }

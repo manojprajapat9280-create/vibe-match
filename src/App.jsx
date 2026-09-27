@@ -4,7 +4,7 @@ import "./App.css";
 import CommunitiesSection from "./Communities.jsx";
 
 // Set to false to restore the existing application without changing its data.
-const MAINTENANCE_MODE = true;
+const MAINTENANCE_MODE = false;
 
 const questions = [
   {

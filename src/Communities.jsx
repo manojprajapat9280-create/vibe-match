@@ -172,33 +172,60 @@ export default function CommunitiesSection() {
 
     return () => window.clearInterval(intervalId);
   }, [loadDetail, qotdUtcDay, selectedCommunity]);
+const loadEngagement = useCallback(async () => {
+  if (!selectedCommunity || !isMember || !questions.length) {
+    setAnswers([]);
+    setReactions([]);
+    setPoints([]);
+    setLoadingEngagement(false);
+    return;
+  }
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadEngagement() {
-      if (!selectedCommunity || !isMember || !questions.length) {
-        setLoadingEngagement(false);
-        return;
-      }
-      setLoadingEngagement(true);
-      const questionIds = questions.map((question) => question.id);
-      const [answerResult, reactionResult, pointResult] = await Promise.all([
-        supabase.from("community_answers").select(ANSWER_FIELDS).in("question_id", questionIds).order("created_at", { ascending: true }),
-        supabase.from("community_reactions").select(REACTION_FIELDS).eq("community_id", selectedCommunity.id),
-        supabase.from("community_point_events").select(POINT_FIELDS).eq("community_id", selectedCommunity.id).eq("action_type", "trophy"),
-      ]);
-      if (cancelled) return;
-      const failure = answerResult.error || reactionResult.error || pointResult.error;
-      if (failure) setError((current) => current || safeError(failure, "Some community activity could not be loaded."));
-      setAnswers(answerResult.data || []);
-      setReactions(reactionResult.data || []);
-      setPoints(pointResult.data || []);
-      setLoadingEngagement(false);
-    }
-    loadEngagement();
-    return () => { cancelled = true; };
-  }, [selectedCommunity, isMember, questions]);
+  setLoadingEngagement(true);
 
+  const questionIds = questions.map((question) => question.id);
+
+  const [answerResult, reactionResult, pointResult] = await Promise.all([
+    supabase
+      .from("community_answers")
+      .select(ANSWER_FIELDS)
+      .in("question_id", questionIds)
+      .order("created_at", { ascending: true }),
+
+    supabase
+      .from("community_reactions")
+      .select(REACTION_FIELDS)
+      .eq("community_id", selectedCommunity.id),
+
+    supabase
+      .from("community_point_events")
+      .select(POINT_FIELDS)
+      .eq("community_id", selectedCommunity.id)
+      .eq("action_type", "trophy"),
+  ]);
+
+  const failure =
+    answerResult.error ||
+    reactionResult.error ||
+    pointResult.error;
+
+  if (failure) {
+    setError(
+      (current) =>
+        current ||
+        safeError(failure, "Some community activity could not be loaded.")
+    );
+  }
+
+  setAnswers(answerResult.data || []);
+  setReactions(reactionResult.data || []);
+  setPoints(pointResult.data || []);
+  setLoadingEngagement(false);
+}, [selectedCommunity, isMember, questions]);
+
+useEffect(() => {
+  loadEngagement();
+}, [loadEngagement]);
   const leaderboard = useMemo(() => {
     const totals = new Map();
     for (const event of points) {

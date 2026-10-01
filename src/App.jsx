@@ -2467,8 +2467,8 @@ const sendMessage = async (prefilledText, targetMatch = activeMatch) => {
 
     const isExpired =
       timeLeft === "Time expired" &&
-      !isRevealed &&
-      !revealRequest;
+      !isRevealed  ;
+    
 
     const requestWasSentByMe =
       revealRequest &&

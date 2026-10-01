@@ -1754,6 +1754,13 @@ html[data-theme="dark"] body,
 .theme-root[data-theme="dark"] .chat-icebreaker-picker strong { color: #c7dff5; }
 .theme-root[data-theme="dark"] .chat-icebreaker-picker button { border-color: #38546f; background: #1a3048; color: #dcecff; }
 .theme-root[data-theme="dark"] .reveal-card { border-color: #2e4862; background: #14263a; color: #e2edf8; }
+.reveal-declined-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #dce8f5; background: #f3f8ff; color: #315879; }
+.reveal-declined-notice strong { color: #214f7a; font-size: 13px; }
+.reveal-declined-notice p { margin-top: 3px; color: #5f7790; font-size: 12px; }
+.reveal-declined-notice button { flex: 0 0 auto; }
+.theme-root[data-theme="dark"] .reveal-declined-notice { border-color: #2e4963; background: #142a40; color: #c4d8eb; }
+.theme-root[data-theme="dark"] .reveal-declined-notice strong { color: #e1effc; }
+.theme-root[data-theme="dark"] .reveal-declined-notice p { color: #a9bed2; }
 @media (max-width: 700px) {
   .landing-card { margin-top: 3vh; padding: 30px 20px 24px; }
   .questionnaire-card { margin: 12px auto; padding: 26px 19px; }
@@ -1764,4 +1771,5 @@ html[data-theme="dark"] body,
   .chat-icebreakers-toggle { order: 0; }
   .chat-input-area input { order: 1; }
   .chat-input-area > button:last-child { order: 2; }
+  .reveal-declined-notice { align-items: stretch; flex-direction: column; }
 }

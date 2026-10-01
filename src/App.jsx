@@ -2457,14 +2457,18 @@ const sendMessage = async (prefilledText, targetMatch = activeMatch) => {
    */
 
   if (activeMatch) {
-    const isExpired =
-      timeLeft ===
-      "Time expired";
-
     const isRevealed =
       activeMatch.status ===
         "revealed" ||
       revealedProfile;
+
+    const revealWasDeclined =
+      revealRequest?.status === "rejected";
+
+    const isExpired =
+      timeLeft === "Time expired" &&
+      !isRevealed &&
+      !revealRequest;
 
     const requestWasSentByMe =
       revealRequest &&
@@ -2571,7 +2575,8 @@ const sendMessage = async (prefilledText, targetMatch = activeMatch) => {
               </div>
 
               {timeLeft &&
-                !isRevealed && (
+                !isRevealed &&
+                !revealRequest && (
                   <div className="chat-timer">
                     ⏳ {timeLeft}
                   </div>
@@ -2590,6 +2595,38 @@ const sendMessage = async (prefilledText, targetMatch = activeMatch) => {
               <button type="button" onClick={() => blockMatch(activeMatch)}>Block</button>
             </div>
           </div>
+
+          {revealWasDeclined && !isRevealed && (
+            <div className="reveal-declined-notice" role="status">
+              <div>
+                <strong>Reveal request declined</strong>
+                <p>Your conversation can continue anonymously.</p>
+              </div>
+              <button className="secondary-btn" type="button" onClick={requestReveal} disabled={revealLoading}>
+                {revealLoading ? "Sending…" : "Request reveal again"}
+              </button>
+            </div>
+          )}
+
+          {revealRequest?.status === "pending" && !isRevealed && (
+            <div className="reveal-pending-notice" role="status">
+              {requestWasSentByMe ? (
+                <p>⏳ Reveal request sent. You can keep chatting anonymously while you wait.</p>
+              ) : requestReceivedFromOther ? (
+                <>
+                  <p>🤝 {anonymousName} wants to reveal profiles. Chat remains open anonymously.</p>
+                  <div>
+                    <button className="primary-btn" type="button" onClick={() => respondToReveal(true)} disabled={revealLoading}>
+                      ✅ Accept
+                    </button>
+                    <button className="secondary-btn" type="button" onClick={() => respondToReveal(false)} disabled={revealLoading}>
+                      ❌ Decline
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          )}
 
           <div className="messages-area">
             {loadingMessages ? (
@@ -2752,7 +2789,7 @@ const sendMessage = async (prefilledText, targetMatch = activeMatch) => {
                   reveal your profiles.
                 </p>
 
-                {!revealRequest && (
+                {(!revealRequest || revealRequest.status === "rejected") && (
                   <button
                     className="primary-btn"
                     onClick={
@@ -2768,96 +2805,6 @@ const sendMessage = async (prefilledText, targetMatch = activeMatch) => {
                   </button>
                 )}
 
-                {requestWasSentByMe &&
-                  revealRequest.status ===
-                    "pending" && (
-                    <div
-                      style={{
-                        fontSize:
-                          "13px",
-                        opacity:
-                          0.7,
-                      }}
-                    >
-                      ⏳ Reveal request
-                      sent. Waiting for
-                      response...
-                    </div>
-                  )}
-
-                {requestReceivedFromOther &&
-                  revealRequest.status ===
-                    "pending" && (
-                    <div>
-                      <p
-                        style={{
-                          fontWeight:
-                            "600",
-                          marginBottom:
-                            "10px",
-                        }}
-                      >
-                        🤝{" "}
-                        {anonymousName}{" "}
-                        wants to reveal
-                        profiles.
-                      </p>
-
-                      <div
-                        style={{
-                          display:
-                            "flex",
-                          gap:
-                            "10px",
-                          justifyContent:
-                            "center",
-                        }}
-                      >
-                        <button
-                          className="primary-btn"
-                          onClick={() =>
-                            respondToReveal(
-                              true
-                            )
-                          }
-                          disabled={
-                            revealLoading
-                          }
-                        >
-                          ✅ Accept
-                        </button>
-
-                        <button
-                          className="secondary-btn"
-                          onClick={() =>
-                            respondToReveal(
-                              false
-                            )
-                          }
-                          disabled={
-                            revealLoading
-                          }
-                        >
-                          ❌ Reject
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                {revealRequest?.status ===
-                  "rejected" && (
-                  <div
-                    style={{
-                      color:
-                        "#777",
-                      fontSize:
-                        "13px",
-                    }}
-                  >
-                    Reveal request was
-                    rejected.
-                  </div>
-                )}
               </div>
             )}
 
